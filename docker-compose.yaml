@@ -1,0 +1,41 @@
+version: '3.8'
+services:
+  rabbitmq:
+    image: rabbitmq:3-management      # RabbitMQ con interfaccia web di management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"   # Porta AMQP
+      - "15672:15672" # Porta interfaccia di management
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "rabbitcookie"
+      RABBITMQ_DEFAULT_USER: "guest"
+      RABBITMQ_DEFAULT_PASS: "guest"
+    # L'utente guest con password guest è abilitato per accesso locale
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  gateway:
+    build: 
+      context: ./gateway    # directory con il codice del gateway
+      dockerfile: Dockerfile
+    container_name: event-gateway
+    depends_on:
+      rabbitmq:
+        condition: service_healthy  # Assicura che RabbitMQ sia pronto prima di avviare il gateway
+    ports:
+      - "4000:4000"   # Espone la porta WebSocket del gateway
+    environment:
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672"   # URL di connessione a RabbitMQ
+
+  order-service:
+    build:
+      context: ./order-service   # directory con il codice del microservizio
+      dockerfile: Dockerfile
+    container_name: order-service
+    depends_on:
+      rabbitmq:
+        condition: service_healthy  # Assicura che RabbitMQ sia pronto prima di avviare il gateway
+    environment:
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672"
