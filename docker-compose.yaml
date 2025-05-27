@@ -39,3 +39,14 @@ services:
         condition: service_healthy  # Assicura che RabbitMQ sia pronto prima di avviare il gateway
     environment:
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672"
+
+  chat-service:
+    build:
+      context: ./chat-service
+      dockerfile: Dockerfile
+    container_name: chat-service
+    depends_on:
+      rabbitmq:
+        condition: service_healthy  # Assicura che RabbitMQ sia pronto prima di avviare il gateway
+    environment:
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672"
