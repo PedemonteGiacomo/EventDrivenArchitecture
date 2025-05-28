@@ -1,0 +1,9 @@
+{
+  "$id": "OrderSubmitted",
+  "type": "object",
+  "properties": {
+    "details": { "type": "string" }
+  },
+  "required": ["details"],
+  "additionalProperties": false
+}

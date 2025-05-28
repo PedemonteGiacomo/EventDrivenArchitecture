@@ -1,56 +1,74 @@
-// gateway/index.js (Server Node.js Event Gateway)
+// gateway/index.js (Event Gateway con validazione AJV per tutti gli eventi)
 const amqp = require('amqplib');
 const http = require('http');
 const socketio = require('socket.io');
+const Ajv = require('ajv');
 
-// Legge l'URL RabbitMQ dall'env (es. "amqp://guest:guest@rabbitmq:5672")
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost';
-
-// Configura il server HTTP e Socket.IO
-const server = http.createServer();
-const io = socketio(server, {
-  cors: { origin: '*' }  // abilita CORS per dev (da evitare in produzione senza restrizioni appropriate)
-});
 const PORT = process.env.PORT || 4000;
 
-// Connessione a RabbitMQ e setup code ed exchange
+// Carica tutti gli schemi dal folder ../schemas
+const eventNames = ['ChatMessageSent', 'ChatMessage', 'OrderSubmitted'];
+const schemas = eventNames.reduce((acc, name) => {
+  acc[name] = require(`./schemas/${name}.schema.json`);
+  return acc;
+}, {});
+
+const ajv = new Ajv();
+const validators = Object.fromEntries(
+  Object.entries(schemas).map(([name, schema]) => [name, ajv.compile(schema)])
+);
+
+const server = http.createServer();
+const io = socketio(server, { cors: { origin: '*' } });
+
+let channel;
+
+// Connessione a RabbitMQ e setup
 async function setupRabbitMQ() {
   const conn = await amqp.connect(RABBITMQ_URL);
-  const channel = await conn.createChannel();
+  channel = await conn.createChannel();
+
   const exchange = 'events';
   await channel.assertExchange(exchange, 'topic', { durable: false });
 
-  // Coda esclusiva per il gateway per ricevere tutti gli eventi (pattern '#')
-  const qok = await channel.assertQueue('', { exclusive: true });
-  const queueName = qok.queue;
-  await channel.bindQueue(queueName, exchange, '#');   // sottoscrive a tutti gli eventi dell'exchange
+  const { queue } = await channel.assertQueue('', { exclusive: true });
+  await channel.bindQueue(queue, exchange, '#');
 
-  // Consuma messaggi dalla coda e inoltra via WebSocket ai client
-  await channel.consume(queueName, (msg) => {
-    if (msg) {
-      const routingKey = msg.fields.routingKey;                  // tipo di evento
-      const content = msg.content.toString();
-      console.log(`Gateway: ricevuto evento ${routingKey} da RabbitMQ -> inoltro ai client WebSocket`);
-      // Inoltra a *tutti* i client connessi un evento col nome routingKey
-      io.emit(routingKey, JSON.parse(content));
-      channel.ack(msg);  // conferma messaggio come elaborato
+  await channel.consume(queue, (msg) => {
+    if (!msg) return;
+    const eventName = msg.fields.routingKey;
+    const data = JSON.parse(msg.content.toString());
+
+    // Validazione in entrata
+    if (validators[eventName] && !validators[eventName](data)) {
+      console.error(`Invalid ${eventName}:`, validators[eventName].errors);
+      channel.ack(msg);
+      return;
     }
+
+    // Inoltra via WebSocket
+    io.emit(eventName, data);
+    channel.ack(msg);
   }, { noAck: false });
 
   console.log("Gateway collegato a RabbitMQ, in attesa di eventi...");
-  return channel;
 }
 
-// Gestione delle connessioni client WebSocket
+// WebSocket → RabbitMQ
 io.on('connection', (socket) => {
   console.log('Client WebSocket connesso:', socket.id);
 
-  // Ricezione di un evento generico dal client
   socket.onAny((eventName, data) => {
-    console.log(`Gateway: evento ricevuto dal client -> ${eventName}`, data);
-    // Pubblica l'evento ricevuto sull'exchange RabbitMQ
+    // Validazione in uscita
+    const validate = validators[eventName];
+    if (validate && !validate(data)) {
+      console.error(`Invalid outgoing ${eventName}:`, validate.errors);
+      return;
+    }
+
     channel.publish('events', eventName, Buffer.from(JSON.stringify(data)));
-    console.log(`Gateway: inoltrato evento ${eventName} a RabbitMQ`);
+    console.log(`Gateway: inoltrato evento ${eventName} a RabbitMQ`, data);
   });
 
   socket.on('disconnect', () => {
@@ -58,12 +76,11 @@ io.on('connection', (socket) => {
   });
 });
 
-// Avvia sia il server HTTP/WebSocket che la connessione RabbitMQ
-let channel;
+// Avvia server HTTP/WebSocket e RabbitMQ
 server.listen(PORT, async () => {
   console.log(`Event Gateway in ascolto su ws://localhost:${PORT}`);
   try {
-    channel = await setupRabbitMQ();
+    await setupRabbitMQ();
   } catch (err) {
     console.error("Errore connessione RabbitMQ:", err);
   }

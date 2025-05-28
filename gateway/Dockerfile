@@ -1,12 +1,18 @@
-# Usa Node.js 18 leggero
-FROM node:18-alpine   
+# gateway/Dockerfile
+FROM node:18-alpine
 
 WORKDIR /app
-COPY package*.json ./
-# Installa le dipendenze
-RUN npm install       
 
+# 1) Copio solo il package.json del gateway
+COPY gateway/package*.json ./
 
-COPY . .
-CMD ["node", "index.js"]   
-# Comando di avvio (esegue il file index.js)
+# 2) Copio la cartella dei JSON Schema (dalla root del contesto)
+COPY schemas ./schemas
+
+# 3) Installo dipendenze
+RUN npm install
+
+# 4) Copio **solo** il codice del gateway
+COPY gateway/. ./
+
+CMD ["node", "index.js"]

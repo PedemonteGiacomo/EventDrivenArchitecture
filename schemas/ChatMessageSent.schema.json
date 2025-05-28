@@ -1,0 +1,10 @@
+{
+  "$id": "ChatMessageSent",
+  "type": "object",
+  "properties": {
+    "sender": { "type": "string", "enum": ["user","bot"] },
+    "text":   { "type": "string" }
+  },
+  "required": ["sender","text"],
+  "additionalProperties": false
+}
